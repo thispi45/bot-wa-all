@@ -1,76 +1,52 @@
-global.crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const QRCode = require('qrcode'); // ganti dari qrcode-terminal
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const fs = require('fs');
 
-const PHONE_NUMBER = '6283840825527'; // GANTI DENGAN NOMOR KAMU, format 62xxx tanpa +
-const authPath = path.join(__dirname, 'auth_info');
-
-// Hapus auth kalau corrupt/kosong
-if (fs.existsSync(authPath) && (!fs.existsSync(authPath + '/creds.json') || fs.statSync(authPath + '/creds.json').size < 10)) {
-    fs.rmSync(authPath, { recursive: true, force: true });
-    console.log('[RESET] auth_info dihapus');
-}
+const PHONE_NUMBER = '6283840825527'; // Nomor kamu
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-    let pairingRequested = false;
 
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ['Chrome', 'Windows', '10.0'],
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
-        syncFullHistory: false
+        browser: ['Chrome', 'Windows', '10.0']
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+        const { connection, lastDisconnect } = update;
 
-        if (qr) {
-            console.log('\n[QR] Scan QR ini di WhatsApp:');
-            QRCode.toString(qr, { type: 'terminal', small: false }, (err, url) => {
-                if (err) return console.log(err);
-                console.log(url); // QR rapat hitam pekat
-            });
-            console.log('[QR] QR berlaku 20 detik\n');
-        }
-
-        if (connection === 'connecting' &&!state.creds.registered &&!pairingRequested) {
-            pairingRequested = true;
-            await new Promise(r => setTimeout(r, 3000)); // tunggu socket stabil
-            try {
-                const code = await sock.requestPairingCode(PHONE_NUMBER);
-                console.log('[PAIRING] KODE:', code.match(/.{1,4}/g).join("-"));
-                console.log('[PAIRING] Input dalam 20 detik!\n');
-            } catch (err) {
-                console.log('[PAIRING] Gagal 428. Pakai QR di atas ya\n');
-            }
+        // Minta kode pairing kalau belum login
+        if (connection === 'connecting' &&!state.creds.registered) {
+            await new Promise(r => setTimeout(r, 3000)); // kasih jeda 3 detik
+            const code = await sock.requestPairingCode(PHONE_NUMBER);
+            console.log('\n====================================');
+            console.log('WA > Setelan > Perangkat Tertaut > Tautkan nomor');
+            console.log('KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+            console.log('Input dalam 20 detik!');
+            console.log('====================================\n');
         }
 
         if (connection === 'open') {
-            console.log('[CONNECT] Bot berhasil terhubung ke WhatsApp ✅\n');
+            console.log('✅ Bot berhasil terhubung ke WhatsApp\n');
         }
 
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
-            console.log('[DISCONNECT] Code:', code);
+            console.log('❌ Disconnect Code:', code);
             if (code!== DisconnectReason.loggedOut) {
-                console.log('[RECONNECT] Coba lagi dalam 5 detik...');
+                console.log('🔄 Reconnect 5 detik lagi...');
                 setTimeout(() => startBot(), 5000);
             } else {
-                fs.rmSync(authPath, { recursive: true, force: true });
-                console.log('[LOGOUT] Auth dihapus. Redeploy untuk QR baru');
+                fs.rmSync('auth_info', { recursive: true, force: true });
+                console.log('🔄 Auth dihapus. Redeploy untuk kode baru');
             }
         }
     });
 
+    // Contoh fitur!all
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
