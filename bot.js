@@ -10,7 +10,7 @@ async function startBot() {
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ['Chrome (Linux)', '', ''], // Samarkan biar gak kebaca bot
+        browser: ['Chrome (Linux)', '', ''],
         markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
     });
@@ -35,6 +35,32 @@ async function startBot() {
         if (connection === 'open') console.log('✅ Bot terhubung');
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
+            console.log('❌ Disconnect:', code);
+            if (code === 405) {
+                console.log('IP/Nomor Keban. Stop deploy 30 menit');
+                process.exit(1);
+            } else if (code!== DisconnectReason.loggedOut) { // <-- ini yg aku fix
+                setTimeout(startBot, 5000);
+            }
+        }
+    });
+
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        const chatId = msg.key.remoteJid;
+        if (text.toLowerCase().startsWith('!all') && chatId.endsWith('@g.us')) {
+            const groups = await sock.groupFetchAllParticipating();
+            const mentions = groups[chatId]?.participants.map(p => p.id).slice(0, 200) || [];
+            await sock.sendMessage(chatId, {
+                text: `*${text.replace(/!all/i, '').trim() || 'Tag' }*\n\n${mentions.map(m => `@${m.split('@')[0]}`).join(' ')}`,
+                mentions
+            });
+        }
+    });
+}
+startBot();            const code = lastDisconnect.error?.output?.statusCode;
             console.log('❌ Disconnect:', code);
             if (code === 405) {
                 console.log('IP/Num Keban. Stop deploy 30 menit');
