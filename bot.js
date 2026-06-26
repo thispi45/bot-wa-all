@@ -12,7 +12,6 @@ async function startBot() {
         browser: ['Ubuntu', 'Chrome', '20.0'],
         emitOwnEvents: false,
         syncFullHistory: false,
-        printQRInTerminal: true,
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -27,34 +26,34 @@ async function startBot() {
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
             console.log('❌ Disconnect:', code);
-            if (code!== DisconnectReason.loggedOut) setTimeout(startBot, 3000);
+            // 405 = banned/session error. Clear auth & restart
+            if (code === 405 || code === DisconnectReason.loggedOut) {
+                fs.rmSync('auth_info', { recursive: true, force: true });
+                console.log('🔄 Auth dihapus. Redeploy untuk QR baru');
+            } else {
+                setTimeout(startBot, 3000);
+            }
         }
     });
 
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
-
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         const chatId = msg.key.remoteJid;
 
         if (text.toLowerCase().startsWith('!all') && chatId.endsWith('@g.us')) {
-            console.log('[DEBUG] Deteksi!all');
             try {
                 const groups = await sock.groupFetchAllParticipating();
-                const metadata = groups[chatId];
-                if (!metadata) throw new Error('Data grup tidak ditemukan');
-
-                const mentions = metadata.participants.map(p => p.id).slice(0, 200);
+                const mentions = groups[chatId]?.participants.map(p => p.id).slice(0, 200) || [];
                 const pesan = text.replace(/!all/i, '').trim() || 'Perhatian semua!';
-                const textKirim = `*${pesan}*\n\n${mentions.map(m => `@${m.split('@')[0]}`).join(' ')}`;
-
-                await sock.sendMessage(chatId, { text: textKirim, mentions });
-                console.log('[DEBUG] Berhasil kirim tag + notif');
-
+                await sock.sendMessage(chatId, { 
+                    text: `*${pesan}*\n\n${mentions.map(m => `@${m.split('@')[0]}`).join(' ')}`, 
+                    mentions 
+                });
+                console.log('[DEBUG] Tag berhasil');
             } catch (err) {
                 console.log('[ERROR!all]', err.message);
-                await sock.sendMessage(chatId, { text: `Gagal tag: ${err.message}` });
             }
         }
     });
