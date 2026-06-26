@@ -1,6 +1,7 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
+const PHONE = '6283840825527'; // Nomor kamu
 
 async function startBot() {
     if (!fs.existsSync('auth_info')) fs.mkdirSync('auth_info');
@@ -8,33 +9,58 @@ async function startBot() {
 
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'warn' }),
-        browser: ['Ubuntu', 'Chrome', '20.0'],
-        emitOwnEvents: false,
-        syncFullHistory: false,
+        logger: pino({ level: 'silent' }),
+        browser: ['Chrome (Linux)', '', ''], // Samarkan biar gak kebaca bot
+        markOnlineOnConnect: false,
+        connectTimeoutMs: 60000,
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        if (qr) {
-            console.log('\n==== SCAN QR INI ====');
-            console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
-            console.log('=====================\n');
+    if (!state.creds.registered) {
+        console.log('Menunggu 10 detik sebelum request kode...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        try {
+            const code = await sock.requestPairingCode(PHONE);
+            console.log('\n====================================');
+            console.log('PAIRING CODE:', code.match(/.{1,4}/g).join("-"));
+            console.log('Buka WA > Perangkat Tertaut > Tautkan');
+            console.log('====================================\n');
+        } catch (e) {
+            console.log('Gagal request kode:', e.message);
         }
-        if (connection === 'open') console.log('✅ Bot terhubung v6.7.17');
+    }
+
+    sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+        if (connection === 'open') console.log('✅ Bot terhubung');
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
             console.log('❌ Disconnect:', code);
-            // 405 = banned/session error. Clear auth & restart
-            if (code === 405 || code === DisconnectReason.loggedOut) {
-                fs.rmSync('auth_info', { recursive: true, force: true });
-                console.log('🔄 Auth dihapus. Redeploy untuk QR baru');
-            } else {
-                setTimeout(startBot, 3000);
+            if (code === 405) {
+                console.log('IP/Num Keban. Stop deploy 30 menit');
+                process.exit(1);
+            } else if (code!== DisconnectReason.loggedOut) {
+                setTimeout(startBot, 5000);
             }
         }
     });
+
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        const chatId = msg.key.remoteJid;
+        if (text.toLowerCase().startsWith('!all') && chatId.endsWith('@g.us')) {
+            const groups = await sock.groupFetchAllParticipating();
+            const mentions = groups[chatId]?.participants.map(p => p.id).slice(0, 200) || [];
+            await sock.sendMessage(chatId, {
+                text: `*${text.replace(/!all/i, '').trim() || 'Tag' }*\n\n${mentions.map(m => `@${m.split('@')[0]}`).join(' ')}`,
+                mentions
+            });
+        }
+    });
+}
+startBot();    });
 
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
