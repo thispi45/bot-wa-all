@@ -41,14 +41,22 @@ async function startBot() {
 
     // Minta kode pairing kalau belum login
     if (!state.creds.registered) {
-        await new Promise(r => setTimeout(r, 4000)); // tunggu 4 detik biar socket stabil
-        const phoneNumber = '6283840825527'; // <-- GANTI DENGAN NOMOR WA KAMU. Format: 62xxx, bukan 08xxx
-        try {
-            const code = await sock.requestPairingCode(phoneNumber);
-            console.log('[PAIRING] KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
-            console.log('[PAIRING] Buka WA > Perangkat Tertaut > Tautkan dengan nomor telepon');
-        } catch (err) {
-            console.error('[ERROR] Gagal minta pairing code:', err.message);
+        await new Promise(r => setTimeout(r, 8000)); // naikkan jadi 8 detik
+        const phoneNumber = '6283840825527'; // <-- JANGAN LUPA GANTI
+        
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                const code = await sock.requestPairingCode(phoneNumber);
+                console.log('[PAIRING] KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+                console.log('[PAIRING] Buka WA > Perangkat Tertaut > Tautkan dengan nomor telepon');
+                break; // sukses, keluar dari loop
+            } catch (err) {
+                retries--;
+                console.error(`[ERROR] Gagal minta pairing code. Retry ${3 - retries}/3:`, err.message);
+                if (retries > 0) await new Promise(r => setTimeout(r, 5000));
+                else console.log('[FATAL] Gagal dapat kode setelah 3x retry. Restart bot...');
+            }
         }
     }
 
