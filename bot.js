@@ -3,63 +3,47 @@ const pino = require('pino');
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+
     const sock = makeWASocket({
-        logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: true
+        logger: pino({ level: 'info' }),
+        browser: ['Railway Bot', 'Chrome', '1.0.0']
     });
 
     sock.ev.on('creds.update', saveCreds);
 
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+
+        if(connection === 'open') {
+            console.log('Bot siap & terhubung ke WhatsApp');
+        }
+        if(connection === 'close') {
+            startBot(); // auto reconnect
+        }
+    });
+
+    // Minta kode pairing kalau belum login
+    if (!state.creds.registered) {
+        await new Promise(r => setTimeout(r, 3000)); // tunggu 3 detik
+        const phoneNumber = '6283840825527'; // <-- GANTI INI DENGAN NOMOR WA KAMU. PAKAI 62, BUKAN 08
+        const code = await sock.requestPairingCode(phoneNumber);
+        console.log('KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+    }
+
+    // Fitur!all
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
-
-        const from = msg.key.remoteJid;
-        const sender = msg.key.participant || msg.key.remoteJid;
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        const chatId = msg.key.remoteJid;
 
-        if (!from.endsWith('@g.us')) return;
-
-        const groupMetadata = await sock.groupMetadata(from);
-        const admins = groupMetadata.participants
-          .filter(p => p.admin === 'admin' || p.admin === 'superadmin')
-          .map(p => p.id);
-
-        const isAdmin = admins.includes(sender);
-
-        // Command:!all pesan apa saja
-        if (text.toLowerCase().startsWith('!all')) {
-            if (!isAdmin) {
-                return sock.sendMessage(from, { text: '❌ Command ini khusus admin grup.' }, { quoted: msg });
-            }
-
-            const members = groupMetadata.participants.map(p => p.id);
-
-            // Ambil pesan setelah "!all "
-            const customMsg = text.slice(4).trim();
-            const pesan = customMsg
-               ? `📢 *Pemberitahuan dari Admin* 📢\n\n${customMsg}\n\n${members.map(jid => `@${jid.split('@')[0]}`).join(' ')}`
-                : `📢 *Panggilan untuk semua member* 📢\n\n${members.map(jid => `@${jid.split('@')[0]}`).join(' ')}`;
-
-            await sock.sendMessage(from, {
-                text: pesan,
-                mentions: members
-            }, { quoted: msg });
+        if (text.startsWith('!all') && chatId.endsWith('@g.us')) {
+            const metadata = await sock.groupMetadata(chatId);
+            const mentions = metadata.participants.map(p => p.id);
+            const pesan = text.replace('!all', '').trim() || 'Perhatian semua!';
+            await sock.sendMessage(chatId, { text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '), mentions });
         }
-
-        if (text.toLowerCase() === '!menu') {
-            let menu = `*Menu Bot Grup*\n\n`;
-            menu += `!all [pesan] - Tag semua member + pesan custom [Khusus Admin]\n`;
-            menu += `Contoh:!all Rapat jam 20.00 malam ini\n`;
-            menu += `!menu - Lihat menu ini`;
-            await sock.sendMessage(from, { text: menu }, { quoted: msg });
-        }
-    });
-
-    sock.ev.on('connection.update', (u) => {
-        if (u.connection === 'open') console.log('Bot sudah online');
     });
 }
-
 startBot();
