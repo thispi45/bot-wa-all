@@ -2,15 +2,17 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const fs = require('fs');
 
-const PHONE_NUMBER = '6283840825527'; // Nomor kamu
+const PHONE_NUMBER = '6283840825527'; // Ganti nomor kamu
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'info' }), // ganti ke info biar keliatan log
-        browser: ['Chrome', 'Windows', '10.0']
+        logger: pino({ level: 'info' }),
+        browser: ['Chrome', 'Windows', '10.0'],
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -24,7 +26,7 @@ async function startBot() {
             console.log(qrUrl + '\n');
         }
 
-        if (connection === 'connecting' &&!state.creds.registered) {
+        if (connection === 'connecting' && !state.creds.registered) {
             await new Promise(r => setTimeout(r, 5000));
             try {
                 const code = await sock.requestPairingCode(PHONE_NUMBER);
@@ -42,6 +44,7 @@ async function startBot() {
             const code = lastDisconnect.error?.output?.statusCode;
             console.log('❌ Disconnect Code:', code);
             if (code !== DisconnectReason.loggedOut) {
+                console.log('🔄 Reconnect 5 detik lagi...');
                 setTimeout(() => startBot(), 5000);
             } else {
                 fs.rmSync('auth_info', { recursive: true, force: true });
@@ -50,23 +53,28 @@ async function startBot() {
         }
     });
 
-    // Fitur !all + debug
+    // Fitur !all - versi anti timeout 408
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
 
-        const text = msg.message.conversation 
-                  || msg.message.extendedTextMessage?.text 
-                  || msg.message.imageMessage?.caption 
+        const text = msg.message.conversation
+                  || msg.message.extendedTextMessage?.text
+                  || msg.message.imageMessage?.caption
                   || '';
         const chatId = msg.key.remoteJid;
 
-        console.log(`[PESAN] ${text} | [CHAT] ${chatId}`);
+        console.log(`[PESAN] ${text} | ${chatId}`);
 
         if (text.toLowerCase().startsWith('!all') && chatId.endsWith('@g.us')) {
             console.log('[DEBUG] Deteksi perintah !all');
             try {
-                const metadata = await sock.groupMetadata(chatId);
+                // Pakai cache grup biar gak timeout
+                const groups = await sock.groupFetchAllParticipating();
+                const metadata = groups[chatId];
+
+                if (!metadata) throw new Error('Data grup tidak ditemukan');
+
                 const mentions = metadata.participants.map(p => p.id);
                 const pesan = text.replace(/!all/i, '').trim() || 'Perhatian semua!';
 
@@ -75,10 +83,15 @@ async function startBot() {
                     mentions
                 });
                 console.log('[DEBUG] Berhasil kirim tag all');
+
             } catch (err) {
-                console.log('[ERROR !all]', err);
+                console.log('[ERROR !all]', err.message);
+                await sock.sendMessage(chatId, { 
+                    text: `Gagal tag semua: ${err.message}. Coba lagi.` 
+                });
             }
         }
     });
 }
+
 startBot();
