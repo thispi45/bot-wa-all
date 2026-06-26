@@ -16,17 +16,31 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
 
-        // Minta kode pairing kalau belum login
-        if (connection === 'connecting' &&!state.creds.registered) {
-            await new Promise(r => setTimeout(r, 3000)); // kasih jeda 3 detik
-            const code = await sock.requestPairingCode(PHONE_NUMBER);
+        // Step 1: Kasih link QR dulu buat unlock
+        if (qr) {
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
             console.log('\n====================================');
-            console.log('WA > Setelan > Perangkat Tertaut > Tautkan nomor');
-            console.log('KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
-            console.log('Input dalam 20 detik!');
+            console.log('STEP 1: Buka link ini di HP & scan 1x');
+            console.log(qrUrl);
+            console.log('Scan -> Logout lagi dari WA -> Lanjut Step 2');
             console.log('====================================\n');
+        }
+
+        // Step 2: Minta kode pairing setelah 5 detik
+        if (connection === 'connecting' &&!state.creds.registered) {
+            await new Promise(r => setTimeout(r, 5000));
+            try {
+                const code = await sock.requestPairingCode(PHONE_NUMBER);
+                console.log('====================================');
+                console.log('STEP 2: WA > Setelan > Perangkat Tertaut');
+                console.log('KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+                console.log('Input dalam 20 detik!');
+                console.log('====================================\n');
+            } catch (e) {
+                console.log('Gagal minta kode. Scan QR di atas dulu');
+            }
         }
 
         if (connection === 'open') {
@@ -36,7 +50,7 @@ async function startBot() {
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
             console.log('❌ Disconnect Code:', code);
-            if (code!== DisconnectReason.loggedOut) {
+            if (code !== DisconnectReason.loggedOut) {
                 console.log('🔄 Reconnect 5 detik lagi...');
                 setTimeout(() => startBot(), 5000);
             } else {
@@ -46,7 +60,7 @@ async function startBot() {
         }
     });
 
-    // Contoh fitur!all
+    // Fitur !all
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
