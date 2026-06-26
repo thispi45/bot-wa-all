@@ -1,16 +1,12 @@
 {
   "name": "wa-bot",
   "version": "1.0.0",
-  "description": "Whatsapp Bot",
   "main": "bot.js",
-  "scripts": {
-    "start": "node bot.js"
-  },
-  "engines": {
-    "node": "18.x"
-  },
+  "type": "commonjs",
+  "engines": { "node": "20.x" },
+  "scripts": { "start": "node bot.js" },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.5",
-    "pino": "^8.17.0"
+    "@whiskeysockets/baileys": "^6.7.17",
+    "pino": "^9.4.0"
   }
 }
