@@ -1,11 +1,11 @@
 global.crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode'); // ganti dari qrcode-terminal
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
-const PHONE_NUMBER = '6283840825527'; // WAJIB GANTI 62xxx
+const PHONE_NUMBER = '6283840825527'; // GANTI DENGAN NOMOR KAMU, format 62xxx tanpa +
 const authPath = path.join(__dirname, 'auth_info');
 
 // Hapus auth kalau corrupt/kosong
@@ -34,35 +34,39 @@ async function startBot() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            console.log('\n[QR] Scan QR ini di WA:');
-            qrcode.generate(qr, { small: true });
-            console.log('\n');
+            console.log('\n[QR] Scan QR ini di WhatsApp:');
+            QRCode.toString(qr, { type: 'terminal', small: false }, (err, url) => {
+                if (err) return console.log(err);
+                console.log(url); // QR rapat hitam pekat
+            });
+            console.log('[QR] QR berlaku 20 detik\n');
         }
 
         if (connection === 'connecting' &&!state.creds.registered &&!pairingRequested) {
             pairingRequested = true;
-            await new Promise(r => setTimeout(r, 3000)); // tunggu socket stabil 3 detik
+            await new Promise(r => setTimeout(r, 3000)); // tunggu socket stabil
             try {
                 const code = await sock.requestPairingCode(PHONE_NUMBER);
-                console.log('[PAIRING] KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
-                console.log('[PAIRING] Input dalam 20 detik!');
+                console.log('[PAIRING] KODE:', code.match(/.{1,4}/g).join("-"));
+                console.log('[PAIRING] Input dalam 20 detik!\n');
             } catch (err) {
-                console.log('[PAIRING] Gagal request pairing 428. Fallback ke QR otomatis...');
-                pairingRequested = false; // biar QR ke-trigger
+                console.log('[PAIRING] Gagal 428. Pakai QR di atas ya\n');
             }
         }
 
         if (connection === 'open') {
-            console.log('[CONNECT] Bot berhasil terhubung ke WhatsApp ✅');
+            console.log('[CONNECT] Bot berhasil terhubung ke WhatsApp ✅\n');
         }
 
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
             console.log('[DISCONNECT] Code:', code);
             if (code!== DisconnectReason.loggedOut) {
+                console.log('[RECONNECT] Coba lagi dalam 5 detik...');
                 setTimeout(() => startBot(), 5000);
             } else {
-                fs.rmSync(authPath, { recursive: true, force: true }); // logout = hapus auth
+                fs.rmSync(authPath, { recursive: true, force: true });
+                console.log('[LOGOUT] Auth dihapus. Redeploy untuk QR baru');
             }
         }
     });
