@@ -2,6 +2,8 @@ global.crypto = require('crypto'); // <-- INI KUNCI NYA, taruh paling atas
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
+const fs = require('fs');
+if (fs.existsSync('./auth_info')) fs.rmSync('./auth_info', { recursive: true, force: true });
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
