@@ -1,49 +1,80 @@
-global.crypto = require('crypto'); // <-- INI KUNCI NYA, taruh paling atas
-const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+global.crypto = require('crypto'); // Fix error crypto di Node 18 Railway
+const fs = require('fs');
+const path = require('path');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
-const fs = require('fs');
-if (fs.existsSync('./auth_info')) fs.rmSync('./auth_info', { recursive: true, force: true });
+// Hapus folder auth_info biar gak corrupt 428
+const authPath = path.join(__dirname, 'auth_info');
+if (fs.existsSync(authPath)) {
+    fs.rmSync(authPath, { recursive: true, force: true });
+    console.log('[RESET] Folder auth_info dihapus');
+}
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'info' }),
-        browser: ['Railway Bot', 'Chrome', '1.0.0']
+        browser: ['Railway Bot', 'Chrome', '1.0.0'],
+        printQRInTerminal: false // kita pakai pairing code
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection } = update;
+        const { connection, lastDisconnect } = update;
+
         if (connection === 'open') {
-            console.log('Bot siap & terhubung ke WhatsApp');
+            console.log('[CONNECT] Bot berhasil terhubung ke WhatsApp');
         }
+
         if (connection === 'close') {
-            startBot();
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode!== DisconnectReason.loggedOut;
+            console.log('[DISCONNECT] Alasan:', lastDisconnect.error?.message);
+            if (shouldReconnect) {
+                startBot(); // auto reconnect
+            }
         }
     });
 
+    // Minta kode pairing kalau belum login
     if (!state.creds.registered) {
-        await new Promise(r => setTimeout(r, 3000));
-        const phoneNumber = '6283840825527'; // GANTI DENGAN NOMOR KAMU +62
-        const code = await sock.requestPairingCode(phoneNumber);
-        console.log('KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+        await new Promise(r => setTimeout(r, 4000)); // tunggu 4 detik biar socket stabil
+        const phoneNumber = '6283840825527'; // <-- GANTI DENGAN NOMOR WA KAMU. Format: 62xxx, bukan 08xxx
+        try {
+            const code = await sock.requestPairingCode(phoneNumber);
+            console.log('[PAIRING] KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+            console.log('[PAIRING] Buka WA > Perangkat Tertaut > Tautkan dengan nomor telepon');
+        } catch (err) {
+            console.error('[ERROR] Gagal minta pairing code:', err.message);
+        }
     }
 
+    // Fitur!all untuk tag semua member grup
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
+
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         const chatId = msg.key.remoteJid;
 
         if (text.startsWith('!all') && chatId.endsWith('@g.us')) {
-            const metadata = await sock.groupMetadata(chatId);
-            const mentions = metadata.participants.map(p => p.id);
-            const pesan = text.replace('!all', '').trim() || 'Perhatian semua!';
-            await sock.sendMessage(chatId, { text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '), mentions });
+            try {
+                const metadata = await sock.groupMetadata(chatId);
+                const mentions = metadata.participants.map(p => p.id);
+                const pesan = text.replace('!all', '').trim() || 'Perhatian semua!';
+                await sock.sendMessage(chatId, {
+                    text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '),
+                    mentions
+                });
+                console.log(`[TAG] Berhasil tag ${mentions.length} member`);
+            } catch (err) {
+                console.error('[ERROR] Gagal!all:', err.message);
+            }
         }
     });
 }
+
 startBot();
