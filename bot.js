@@ -1,14 +1,15 @@
-global.crypto = require('crypto'); // Fix error crypto di Node 18 Railway
+global.crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
-// Hapus folder auth_info biar gak corrupt 428
 const authPath = path.join(__dirname, 'auth_info');
-if (fs.existsSync(authPath)) {
+
+// Hanya hapus kalau file creds.json ukurannya 0 byte / corrupt
+if (fs.existsSync(authPath + '/creds.json') && fs.statSync(authPath + '/creds.json').size < 10) {
     fs.rmSync(authPath, { recursive: true, force: true });
-    console.log('[RESET] Folder auth_info dihapus');
+    console.log('[RESET] creds.json corrupt, dihapus');
 }
 
 async function startBot() {
@@ -16,9 +17,14 @@ async function startBot() {
 
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'info' }),
-        browser: ['Railway Bot', 'Chrome', '1.0.0'],
-        printQRInTerminal: false // kita pakai pairing code
+        logger: pino({ level: 'silent' }), // silent biar log gak spam
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        mobile: true, // <-- KUNCI UTAMA DI RAILWAY
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000,
+        syncFullHistory: false,
+        printQRInTerminal: false
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -31,56 +37,38 @@ async function startBot() {
         }
 
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode!== DisconnectReason.loggedOut;
-            console.log('[DISCONNECT] Alasan:', lastDisconnect.error?.message);
-            if (shouldReconnect) {
-                startBot(); // auto reconnect
+            const code = lastDisconnect.error?.output?.statusCode;
+            console.log('[DISCONNECT] Code:', code, 'Reason:', lastDisconnect.error?.message);
+            if (code!== DisconnectReason.loggedOut) {
+                setTimeout(() => startBot(), 5000); // tunggu 5 detik baru reconnect
             }
         }
     });
 
-    // Minta kode pairing kalau belum login
     if (!state.creds.registered) {
-        await new Promise(r => setTimeout(r, 8000)); // naikkan jadi 8 detik
-        const phoneNumber = '6283840825527'; // <-- JANGAN LUPA GANTI
-        
-        let retries = 3;
-        while (retries > 0) {
-            try {
-                const code = await sock.requestPairingCode(phoneNumber);
-                console.log('[PAIRING] KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
-                console.log('[PAIRING] Buka WA > Perangkat Tertaut > Tautkan dengan nomor telepon');
-                break; // sukses, keluar dari loop
-            } catch (err) {
-                retries--;
-                console.error(`[ERROR] Gagal minta pairing code. Retry ${3 - retries}/3:`, err.message);
-                if (retries > 0) await new Promise(r => setTimeout(r, 5000));
-                else console.log('[FATAL] Gagal dapat kode setelah 3x retry. Restart bot...');
-            }
+        await new Promise(r => setTimeout(r, 15000)); // delay 15 detik
+        const phoneNumber = '6283840825527'; // <-- GANTI NOMOR KAMU 62xxx
+
+        try {
+            const code = await sock.requestPairingCode(phoneNumber);
+            console.log('[PAIRING] KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
+        } catch (err) {
+            console.error('[ERROR] Gagal minta pairing:', err.message);
+            setTimeout(() => process.exit(1), 3000); // exit biar Railway auto restart
         }
     }
 
-    // Fitur!all untuk tag semua member grup
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
-
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         const chatId = msg.key.remoteJid;
 
         if (text.startsWith('!all') && chatId.endsWith('@g.us')) {
-            try {
-                const metadata = await sock.groupMetadata(chatId);
-                const mentions = metadata.participants.map(p => p.id);
-                const pesan = text.replace('!all', '').trim() || 'Perhatian semua!';
-                await sock.sendMessage(chatId, {
-                    text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '),
-                    mentions
-                });
-                console.log(`[TAG] Berhasil tag ${mentions.length} member`);
-            } catch (err) {
-                console.error('[ERROR] Gagal!all:', err.message);
-            }
+            const metadata = await sock.groupMetadata(chatId);
+            const mentions = metadata.participants.map(p => p.id);
+            const pesan = text.replace('!all', '').trim() || 'Perhatian semua!';
+            await sock.sendMessage(chatId, { text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '), mentions });
         }
     });
 }
