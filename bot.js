@@ -1,14 +1,11 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
-const PHONE = '6283840825527';
+const PHONE = '6283840825527'; // Ganti nomormu
 
 async function startBot() {
     try {
-        if (!fs.existsSync('auth_info')) {
-            fs.mkdirSync('auth_info');
-        }
-
+        if (!fs.existsSync('auth_info')) fs.mkdirSync('auth_info');
         const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
         const sock = makeWASocket({
@@ -22,28 +19,21 @@ async function startBot() {
         sock.ev.on('creds.update', saveCreds);
 
         if (!state.creds.registered) {
-            console.log('Menunggu 10 detik sebelum request kode...');
-            await new Promise(resolve => setTimeout(resolve, 10000));
-            const code = await sock.requestPairingCode(PHONE);
-            console.log('\n====================================');
-            console.log('PAIRING CODE:', code.match(/.{1,4}/g).join("-"));
-            console.log('Buka WA > Perangkat Tertaut > Tautkan');
-            console.log('====================================\n');
+            await new Promise(r => setTimeout(r, 10000));
+            try {
+                const code = await sock.requestPairingCode(PHONE);
+                console.log('\nPAIRING CODE:', code.match(/.{1,4}/g).join("-"));
+            } catch (e) {
+                console.log('GAGAL REQUEST KODE:', e.message);
+            }
         }
 
         sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
-            if (connection === 'open') {
-                console.log('✅ Bot terhubung');
-            }
+            if (connection === 'open') console.log('✅ Bot terhubung');
             if (connection === 'close') {
                 const code = lastDisconnect.error?.output?.statusCode;
-                console.log('❌ Disconnect:', code);
-                if (code === 405) {
-                    console.log('IP/Nomor Keban. Stop deploy 30 menit');
-                    process.exit(1);
-                } else if (code!== DisconnectReason.loggedOut) {
-                    setTimeout(startBot, 5000);
-                }
+                if (code === DisconnectReason.loggedOut) process.exit(1);
+                else setTimeout(startBot, 5000);
             }
         });
 
@@ -61,11 +51,9 @@ async function startBot() {
                 });
             }
         });
-
     } catch (err) {
-        console.error('FATAL ERROR:', err);
+        console.error('FATAL:', err);
         process.exit(1);
     }
 }
-
 startBot();
