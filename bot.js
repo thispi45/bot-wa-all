@@ -9,7 +9,7 @@ async function startBot() {
 
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'silent' }),
+        logger: pino({ level: 'info' }), // ganti ke info biar keliatan log
         browser: ['Chrome', 'Windows', '10.0']
     });
 
@@ -18,28 +18,19 @@ async function startBot() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Step 1: Kasih link QR dulu buat unlock
         if (qr) {
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-            console.log('\n====================================');
-            console.log('STEP 1: Buka link ini di HP & scan 1x');
-            console.log(qrUrl);
-            console.log('Scan -> Logout lagi dari WA -> Lanjut Step 2');
-            console.log('====================================\n');
+            console.log('\nSTEP 1: Scan QR ini 1x -> Logout -> Lanjut Step 2');
+            console.log(qrUrl + '\n');
         }
 
-        // Step 2: Minta kode pairing setelah 5 detik
         if (connection === 'connecting' &&!state.creds.registered) {
             await new Promise(r => setTimeout(r, 5000));
             try {
                 const code = await sock.requestPairingCode(PHONE_NUMBER);
-                console.log('====================================');
-                console.log('STEP 2: WA > Setelan > Perangkat Tertaut');
-                console.log('KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
-                console.log('Input dalam 20 detik!');
-                console.log('====================================\n');
+                console.log('STEP 2: KODE PAIRING:', code.match(/.{1,4}/g).join("-"));
             } catch (e) {
-                console.log('Gagal minta kode. Scan QR di atas dulu');
+                console.log('Gagal minta kode. Scan QR dulu');
             }
         }
 
@@ -51,7 +42,6 @@ async function startBot() {
             const code = lastDisconnect.error?.output?.statusCode;
             console.log('❌ Disconnect Code:', code);
             if (code !== DisconnectReason.loggedOut) {
-                console.log('🔄 Reconnect 5 detik lagi...');
                 setTimeout(() => startBot(), 5000);
             } else {
                 fs.rmSync('auth_info', { recursive: true, force: true });
@@ -60,17 +50,34 @@ async function startBot() {
         }
     });
 
-    // Fitur !all
+    // Fitur !all + debug
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+
+        const text = msg.message.conversation 
+                  || msg.message.extendedTextMessage?.text 
+                  || msg.message.imageMessage?.caption 
+                  || '';
         const chatId = msg.key.remoteJid;
-        if (text.startsWith('!all') && chatId.endsWith('@g.us')) {
-            const metadata = await sock.groupMetadata(chatId);
-            const mentions = metadata.participants.map(p => p.id);
-            const pesan = text.replace('!all', '').trim() || 'Perhatian semua!';
-            await sock.sendMessage(chatId, { text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '), mentions });
+
+        console.log(`[PESAN] ${text} | [CHAT] ${chatId}`);
+
+        if (text.toLowerCase().startsWith('!all') && chatId.endsWith('@g.us')) {
+            console.log('[DEBUG] Deteksi perintah !all');
+            try {
+                const metadata = await sock.groupMetadata(chatId);
+                const mentions = metadata.participants.map(p => p.id);
+                const pesan = text.replace(/!all/i, '').trim() || 'Perhatian semua!';
+
+                await sock.sendMessage(chatId, {
+                    text: `*${pesan}*\n\n` + mentions.map(m => `@${m.split('@')[0]}`).join(' '),
+                    mentions
+                });
+                console.log('[DEBUG] Berhasil kirim tag all');
+            } catch (err) {
+                console.log('[ERROR !all]', err);
+            }
         }
     });
 }
